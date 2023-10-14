@@ -1,0 +1,358 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Dataset loading and preparation
+
+In this exercise we will see how fbprophet's performance lines up beside other baseline models. First off lets import some packages we will use. load the data and see how it is structured.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(prophet)
+```
+
+Let's load the data file from the data folder. It has 3 columns: an index, one denoting date and hour, and the other the number of hot dogs sold in this mistery station. The column names are featured in the first row. We should also make sure the date and hour handled correctly.
+
+```{r}
+hd_sales <- read.csv(file = "data/hourly_combined_hd_sales.csv", header = TRUE) %>%
+  mutate(SES_TRX_DATEHOUR = as.POSIXct(SES_TRX_DATEHOUR, format = "%Y-%m-%d %H:%M:%S"))  
+```
+
+Let's see how the dataset is structured:
+
+```{r}
+hd_sales %>% head(30)
+```
+
+We can see that there is a problem: only hours with sales are featured. It would be a lot of additional work to handle this in later steps, so let's add the missing hours with 0 sales. We do this as follows:
+  - we create a complete list of dates between min and max date
+  - add 1-24 hours to all dates
+  - outer join to add missing observations (there is no outer join in tidyverse)
+  - fill sold with zeros where we see NA (ergo there was no match in the data for the given hour)
+  - we will drop index, since it is not needed
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+min_date <- hd_sales %>% pull(SES_TRX_DATEHOUR) %>% min()
+max_date <- hd_sales %>% pull(SES_TRX_DATEHOUR) %>% max()
+
+hd_sales_zero <- tibble(
+  SES_TRX_DATEHOUR = seq(from = min_date, to = max_date, by = "hour")
+  )
+
+hd_sales_full <-hd_sales %>% 
+  right_join(hd_sales_zero, by = c("SES_TRX_DATEHOUR")) %>% 
+  arrange(SES_TRX_DATEHOUR) %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD = ifelse(is.na(NUMBER_OF_PRODUCT_SOLD),0,NUMBER_OF_PRODUCT_SOLD)) %>%
+  select(-INDEX)
+
+hd_sales_full %>% head(30)
+```
+
+### 1st task
+
+What is the percentage of zero sales hours through all observations?
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+n_all_observations <- hd_sales_full %>% nrow()
+n_zero_sales <- hd_sales_full %>% filter(NUMBER_OF_PRODUCT_SOLD == 0) %>%  nrow()
+
+n_zero_sales/n_all_observations
+```
+
+## Data analysis
+
+Lets see some descriptory statistics.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+hd_sales_full %>% summary()
+```
+So we have a little bit more than 3 years of observations with 6 being the median sales number and having some extremely busy hours along the way.
+
+Let's see how sales looks over time.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+ggplot(data=hd_sales_full, aes(x=SES_TRX_DATEHOUR, y=NUMBER_OF_PRODUCT_SOLD, group=1)) +
+  geom_line()+
+  geom_point() + 
+  theme_minimal()
+```
+Not much to see with hourly plotting. Lets create a daily aggregate for analysis and visualize that.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+hd_sales_full_daily <- hd_sales_full %>%
+  mutate(SES_TRX_DATE = as.Date(SES_TRX_DATEHOUR)) %>%
+  group_by(SES_TRX_DATE) %>%
+  summarise(NUMBER_OF_PRODUCT_SOLD = sum(NUMBER_OF_PRODUCT_SOLD))
+
+ggplot(data=hd_sales_full_daily, aes(x=SES_TRX_DATE, y=NUMBER_OF_PRODUCT_SOLD, group=1)) +
+  geom_line()+
+  geom_point() + 
+  theme_minimal()
+```
+Much better. Now we see some local volatility, which can be some weekly periodicity and a regime shift around february of '22 as well as some local trends.
+
+Let's see that weekly periodicity! We can look at the distribution of sales by weekday.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+hd_sales_full_daily_wday <- hd_sales_full_daily %>%
+  mutate(SES_TRX_DAY_OF_WEEK = wday(SES_TRX_DATE, week_start=1, label=TRUE, abbr=FALSE))
+
+ggplot(hd_sales_full_daily_wday, aes(x=SES_TRX_DAY_OF_WEEK, y=NUMBER_OF_PRODUCT_SOLD, color=SES_TRX_DAY_OF_WEEK)) +
+  geom_boxplot() + 
+  theme_minimal()
+```
+But as we see this gets blurred by the trends and larger periods. The only ting that is standing out is that Friday seems to outperform most of the others. Lets prepare relative performance on a weekly level!
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+hd_sales_full_daily_wday <- hd_sales_full_daily_wday %>%
+  mutate(WEEK_LABEL = paste0(format(SES_TRX_DATE,"%Y"),'_',isoweek(SES_TRX_DATE))) %>%
+  group_by(WEEK_LABEL) %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD_WEEKLY = sum(NUMBER_OF_PRODUCT_SOLD)) %>%
+  ungroup() %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD_REL = NUMBER_OF_PRODUCT_SOLD/NUMBER_OF_PRODUCT_SOLD_WEEKLY)
+
+ggplot(hd_sales_full_daily_wday, aes(x=SES_TRX_DAY_OF_WEEK, y=NUMBER_OF_PRODUCT_SOLD_REL, color=SES_TRX_DAY_OF_WEEK)) +
+  geom_boxplot() + 
+  theme_minimal() +
+  ylim(0,0.3)
+```
+Now we see the weekly pattern much stronger: a gradual increase in sales starting from Monday through Friday, then lower relative weekend sales.
+
+### 2nd task
+
+Based on what we have learned before, let's see how the daily periodicity looks like!
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+hd_sales_full_hourly <- hd_sales_full %>%
+  mutate(SES_TRX_DATE = as.Date(SES_TRX_DATEHOUR)) %>%
+  mutate(SES_TRX_HOUR = hour(SES_TRX_DATEHOUR)) %>%
+  group_by(SES_TRX_DATE) %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD_DAILY = sum(NUMBER_OF_PRODUCT_SOLD)) %>%
+  ungroup() %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD_REL = NUMBER_OF_PRODUCT_SOLD/NUMBER_OF_PRODUCT_SOLD_DAILY)
+
+ggplot(hd_sales_full_hourly, aes(x=as.factor(SES_TRX_HOUR), y=NUMBER_OF_PRODUCT_SOLD_REL, color=as.factor(SES_TRX_HOUR))) +
+  geom_boxplot() + 
+  theme_minimal() +
+  ylim(0,0.2) +
+  theme(legend.position="none")
+```
+We can see some local peaks around main mealtimes.
+
+## Preparation for simulations
+
+Now we need to create a set of training and test sets, some involving periods of holidays. Let's set the prediction periods to be 2 weeks long, this will be the timeframe of the test sets as well. Let's create 5 datasets for cross validation. All training periods will start wiht the first observation and ends with the start of the test period. This reflects how we would operate normally in production as well.
+
+```{r}
+model_ranges <- tibble(
+  name = c("Christmas","Late winter","Easter","Early summer","Late summer"),
+  start = as.Date(c("2022-12-19","2023-02-20","2023-04-03","2023-06-05","2023-08-14"))) %>%
+  mutate(end = start + days(13)) %>%
+  mutate(train = map(start, function(x)filter(hd_sales_full, as.Date(SES_TRX_DATEHOUR) < x))) %>%
+  mutate(target = map2(start, end, function(x,y)filter(hd_sales_full, between(as.Date(SES_TRX_DATEHOUR), x, y))))
+model_ranges
+```
+## MA model
+
+As discussed, the main symmetries of the generator process we would like to adhere to are daily and weekly periodicity. A simple heuristic averaging model would look something like this:
+
+$$\chi\left(D,H,N\right)=\frac{1}{N}\sum_{W = 0}^{N} x\left(D-W,H\right)$$,
+
+where $x\left(D,H\right)$ refers to total sales at the $H$ hour of day $D$, $W$ refers to the (maximum $N$) number of weeks to look back to when creating the average: $\chi\left(D,H,N\right)$. Simply put we take the last N weeks sales average from the same weekday's same hour. This is an edge case of the generic moving average (MA) model of the ARIMA family, that forces things like equal weighting of observations.
+
+**Question:** Will taking past observations with equal weighting ($\theta_n$ in MA models) *strengthen* or *dampen* the effect of linear trends in recent observations on our estimate?
+
+Let's formulate this into a function!
+
+```{r}
+calcWeeklyAverage <- function(training, target_datetimes, N){
+  training_upd <- training
+  target_datetimes_sorted <- sort(target_datetimes)
+  for(i in 1:length(target_datetimes_sorted)){
+    #get all dates referring to the relevant history
+    past <- target_datetimes_sorted[i] - weeks(1:N)
+    #get all relevant observations from the training data, calculate estimate (mean)
+    estimate <- training_upd %>% 
+      filter(SES_TRX_DATEHOUR %in% past) %>% 
+      pull(NUMBER_OF_PRODUCT_SOLD) %>% 
+      mean()
+    #update the training dataset so we can estimate for more than 1 week into the future
+    training_upd <- training_upd %>% add_row(SES_TRX_DATEHOUR = target_datetimes_sorted[i], NUMBER_OF_PRODUCT_SOLD = estimate)
+  }
+  return(training_upd %>% tail(length(target_datetimes)))
+}
+```
+
+This model has one parameter, that is to see how many weeky we want to look into the past, namely $N$. Let's create model outputs for $N=4$ and $N=12$. This will take some time.
+
+```{r}
+model_ranges_avg_calced <- model_ranges %>%
+  mutate(model_avg_N_4 = map2(train, target, function(x,y)calcWeeklyAverage(x, y$SES_TRX_DATEHOUR, 4))) %>%
+  mutate(model_avg_N_12 = map2(train, target, function(x,y)calcWeeklyAverage(x, y$SES_TRX_DATEHOUR, 12)))
+```
+
+Let's add some visualization, concentrate on the last week of predicition which is usally how it happens in production.
+
+```{r}
+model_ranges_avg_calced %>%
+  mutate(toplot = map2(train, target, function(x,y)bind_rows(x %>% mutate(LABEL = "Train"), y %>% mutate(LABEL = "Fact")))) %>%
+  mutate(toplot = map2(toplot, model_avg_N_4, function(x,y)bind_rows(x, y %>% mutate(LABEL = "N = 4")))) %>%
+  mutate(toplot = map2(toplot, model_avg_N_12, function(x,y)bind_rows(x, y %>% mutate(LABEL = "N = 12")))) %>%
+  mutate(toplot = map2(toplot, name, function(x,y)mutate(x, SECTION = y))) %>%
+  mutate(toplot = map(toplot, function(x)filter(x, SES_TRX_DATEHOUR > (max(x$SES_TRX_DATEHOUR) - weeks(1))))) %>%
+  pull(toplot) %>%
+  bind_rows() %>%
+  ggplot(aes(x = SES_TRX_DATEHOUR, y = NUMBER_OF_PRODUCT_SOLD, colour = LABEL)) +
+  facet_wrap(vars(SECTION), scales = "free_x") +
+  geom_point() +
+  geom_line()
+```
+
+So far this looks pretty promising, although it is quite hard to decide which model is better. Let's calculate some aggregate errors, like mean absolute error (MAE) and root mean square error (RMSE).
+
+```{r}
+model_ranges_avg_calced %>%
+  mutate(mae.n4 = map2(target, model_avg_N_4, 
+                          function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
+                            mutate(ae = abs(NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            pull(ae) %>%
+                            mean()) %>% unlist()) %>%
+  mutate(mae.n12 = map2(target, model_avg_N_12, 
+                          function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
+                            mutate(ae = abs(NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            pull(ae) %>%
+                            mean()) %>% unlist()) %>%
+  mutate(rmse.n4 = map2(target, model_avg_N_4, 
+                          function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
+                            mutate(se = (NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            pull(se) %>%
+                            {sqrt(mean(.))}) %>% unlist()) %>%
+  mutate(rmse.n12 = map2(target, model_avg_N_12, 
+                          function(x,y)left_join(x , y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
+                            mutate(se = (NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            pull(se) %>%
+                            {sqrt(mean(.))}) %>% unlist()) %>%
+  select(name, mae.n4 : rmse.n12) %>%
+  pivot_longer(mae.n4 : rmse.n12, names_to = "memod", values_to = "value") %>%
+  separate(memod, into = c("measure", "N")) %>%
+  ggplot(aes(x = name, y = value, colour = N, fill = N)) +
+  facet_wrap(vars(measure), scales = "free_y") +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  theme_minimal()
+```
+
+The longer average model (N = 12) seems to outperform the shorter one (N = 4). Not necessarily what I have expected, but the difference is not huge.
+
+## Facebook Prophet model
+
+You can access the documentation of the prophet model [here.](https://facebook.github.io/prophet/docs/quick_start.html#r-api)
+
+Let's setup a test model on the first range:
+  - we need some renaming, like *ds* for time and *y* for the sales variable
+  - we add the hungarian holiday calendar (since the sales data is from HU)
+  - since our date variable is datetime, 
+
+```{r}
+test_set_no <- 5
+
+train <- model_ranges$train[[test_set_no]] %>%
+  rename(ds = SES_TRX_DATEHOUR) %>%
+  rename(y = NUMBER_OF_PRODUCT_SOLD)
+m <- prophet() %>%
+  add_country_holidays('HU') %>%
+  fit.prophet(train)
+```
+
+Let's see if the holidays we are looking for are included (Karácsony, Húsvét).
+
+```{r}
+m$train.holiday.names
+```
+What about the results?
+
+```{r}
+future <- model_ranges$target[[test_set_no]] %>%
+  rename(ds = SES_TRX_DATEHOUR) %>%
+  select(ds)
+fcst <- predict(m, future)
+plot(m, fcst) + xlim(max(future$ds) - weeks(4), max(future$ds))
+```
+Looks OK, let's see the periodicities!
+
+```{r}
+prophet_plot_components(m, fcst)
+```
+We can see:
+ - an increasing (but not too aggressive) trend
+ - the two holidays showing up
+ - a weekly seasonality that reproduces what we have seen in our analysis
+ - an intraday periodicity that also seem to match our earlier observation
+ 
+Let's eat the pudding and check MAE and RMSE
+
+```{r}
+model_ranges$target[[test_set_no]] %>%
+   left_join(fcst %>% select(ds,yhat), by = join_by(SES_TRX_DATEHOUR == ds)) %>%
+   drop_na() %>%
+   mutate(ae = abs(NUMBER_OF_PRODUCT_SOLD-yhat)) %>%
+   mutate(se = (NUMBER_OF_PRODUCT_SOLD-yhat)^2) %>%
+   select(-SES_TRX_DATEHOUR) %>%
+   {setNames(c(mean(.$ae),sqrt(mean(.$se))), c("MAE","RMSE"))}
+```
+
+Funnily enough this (uncallibrated!) model more or less performs similarly to the average model. But remember: we haven't set up any parameters! And prophet has many... see [here.](https://facebook.github.io/prophet/docs/quick_start.html#r-api)
+
+### 2nd task
+
+Play around with the following parameters, train the model and see if you can decrease the error
+
+```{r}
+m2 <- prophet(
+      growth = "linear", #linear or logistic or flat
+      changepoints = NULL,
+      n.changepoints = 25,
+      changepoint.range = 0.8,
+      yearly.seasonality = "auto",
+      weekly.seasonality = "auto",
+      daily.seasonality = "auto",
+      holidays = NULL,
+      seasonality.mode = "additive", #additive or multiplicative
+      seasonality.prior.scale = 100,
+      holidays.prior.scale = 0.01,
+      changepoint.prior.scale = 0.5,
+      interval.width = 0.8,
+      uncertainty.samples = 1000,
+      fit = FALSE
+      ) %>%
+  add_country_holidays('HU') %>%
+  fit.prophet(train %>% mutate(cap = 80) %>% mutate(floor = 0)) #cap and floor added for if logistic growth is selected
+fcst2 <- predict(m, future %>% mutate(cap = 80) %>% mutate(floor = 0))
+```
+
+How does it look?
+
+```{r}
+plot(m2, fcst2) + xlim(max(future$ds) - weeks(4), max(future$ds))
+```
+
+
+Check out the components!
+
+```{r}
+prophet_plot_components(m2, fcst2)
+```
+
+Let's eat the pudding and check MAE and RMSE
+
+```{r}
+model_ranges$target[[test_set_no]] %>%
+   left_join(fcst %>% select(ds,yhat), by = join_by(SES_TRX_DATEHOUR == ds)) %>%
+   drop_na() %>%
+   mutate(ae = abs(NUMBER_OF_PRODUCT_SOLD-yhat)) %>%
+   mutate(se = (NUMBER_OF_PRODUCT_SOLD-yhat)^2) %>%
+   select(-SES_TRX_DATEHOUR) %>%
+   {setNames(c(mean(.$ae),sqrt(mean(.$se))), c("MAE","RMSE"))}
+```
