@@ -1,0 +1,127 @@
+---
+title: "Production planning at MOL Retail"
+author: "Sándor Máté Csaba"
+format: revealjs
+editor: visual
+title-slide-attributes:
+    data-background-image: /hot_dog_presentation_files/hotdok-ambient-0-00-00-00.jpg
+    data-background-size: contain
+    data-background-opacity: "0.5"
+---
+
+## Before I start
+
+Open up the github project [sampaat/mol_hot_dog_fbprophet](https://github.com/sampaat/mol_hot_dog_fbprophet) for today and install the following libraries:
+
+-   tidyverse
+-   lubridate
+-   prophet
+
+## About me
+
+-   Physics MSc @ ELTE, Econ MSc @ Corvinus
+-   Hopefully soon: BI PhD @ Corvinus
+-   Been to: Morgan Stanley / Alphacruncher as Quant / Data Scientist
+
+## Production Planning at MOL Retail
+
+MOL Hot-dog is one of the great success stories of MOL Retail:
+
+-   Recognizable throughout the whole country (and in all MOL countries!)
+-   Available on most MOL petrol stations
+-   1+ Million Hot-dogs sold in August in HU
+
+## How does data analysis comes to hot-dogs?
+
+Business is business:
+
+-   We want to provide instant availability 24/7 to maximise sales
+-   But waste is costly and not environmentally conscious
+
+## How does data analysis comes to hot-dogs?
+
+Fresh products are delicate:
+
+-   Frozen Hot dogs should be thawed up for 8 hours
+-   After taken out of the fridge they have to be sold in 48 hours
+-   It takes 30 minutes for a sausage to warm up
+-   It can stay at most 4 hours on the roller (But the fresher the better!)
+
+## Data/modelling opportunities
+
+-   For most station a long history of sales data is available
+-   Data availability and quality is top noch!
+-   Gastro sales has good periodicity (weekly, daily)
+
+## Data/modelling risks
+
+-   We need to cover new stations with models as well
+-   Marketing campaings and other external shocks can be challegning
+-   Products and product assortments can change a lot
+-   Finite capacities on the stations
+
+## It's Business
+
+-   Instructions must be easy to follow
+-   There will be minimum levels to keep
+-   Sales loss is "hard to sell" even if it is balanced out by savings on waste
+
+## Followup
+
+-   We compare forecasted sales with fact and waste numbers
+-   Compliance is communicated to business
+-   Compliant stations can statistically do better
+  -   50% less waste
+  -   14% more sales
+  
+## Modeling, benchmark
+
+It used to be done with an average model:
+
+$$\chi\left(D,H,N\right)=\frac{1}{N}\sum_{W = 0}^{N} x\left(D-W,H\right)$$
+Basically a moving average model with a weekly step.
+
+## Modeling, fbprophet
+
+The state of the art linear solution:
+
+$$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$
+Sean J. Taylor, Benjamin Letham (2018) Forecasting at scale. *The American Statistician* **72**(1):37-45 (https://peerj.com/preprints/3190.pdf).
+
+## Fbprophet growth
+
+Linear or **nonlinear, saturating growth**:
+
+$$g(t) = \frac{C}{1+exp(-k(t-m))}$$
+It can be made more elaborate with piecewise fit.
+
+## Fbprophet seasonality
+
+Seasonalites are handled with Fourier-series:
+
+$$s(t) = \sum_{n=1}^N\left(a_ncos\left(\frac{2\pi nt}{P}\right)+b_nsin\left(\frac{2\pi nt}{P}\right)\right)$$
+## Fbprophet holidays
+
+Holidays are estimated with a local normal deviation:
+
+$$h(t) = \left[I(t \in D_1),\dots,I(t \in D_L)\right]\kappa$$
+
+## Fbprophet estimation
+
+  - Bayesian approact
+  - Uses Stan’s L-BFGS
+  
+Carpenter, B., Gelman, A., Hoffman, M., Lee, D., Goodrich, B., Betancourt, M., Brubaker,
+M. A., Guo, J., Li, P. & Riddell, A. (2017), ‘Stan: A probabilistic programming language’,
+*Journal of Statistical Software* **76**(1).
+
+
+## Lab
+
+ We will do a lab exercise now to see if fbprophet is in fact better.
+ 
+ Open up *hot_dog_prophet.Rmd* but **do not run the whole thing just yet**...
+ 
+ Any questions so far?
+ 
+

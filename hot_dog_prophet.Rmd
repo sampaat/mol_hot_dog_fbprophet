@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Sales forecasting using ML"
 output: html_notebook
 ---
 
@@ -16,7 +16,7 @@ library(prophet)
 Let's load the data file from the data folder. It has 3 columns: an index, one denoting date and hour, and the other the number of hot dogs sold in this mistery station. The column names are featured in the first row. We should also make sure the date and hour handled correctly.
 
 ```{r}
-hd_sales <- read.csv(file = "data/hourly_combined_hd_sales.csv", header = TRUE) %>%
+hd_sales <- read.csv(file = "data/hourly_combined_hd_sales_B.csv", header = TRUE) %>%
   mutate(SES_TRX_DATEHOUR = as.POSIXct(SES_TRX_DATEHOUR, format = "%Y-%m-%d %H:%M:%S"))  
 ```
 
@@ -143,14 +143,18 @@ We can see some local peaks around main mealtimes.
 
 ## Preparation for simulations
 
-Now we need to create a set of training and test sets, some involving periods of holidays. Let's set the prediction periods to be 2 weeks long, this will be the timeframe of the test sets as well. Let's create 5 datasets for cross validation. All training periods will start wiht the first observation and ends with the start of the test period. This reflects how we would operate normally in production as well.
+Now we need to create a set of training and test sets, some involving periods of holidays. We do this as a form of cross-validation. Let's set the prediction periods to be 2 weeks long, this will be the timeframe of the test sets as well. Let's create 5 datasets for cross validation. All training periods will start wiht the first observation and ends with the start of the test period. This reflects how we would operate normally in production as well. We also only take the last half years observations into the training set to avoid overfitting (and erroneous runtimes, but you can increse it if you want to test around)
 
 ```{r}
+training_days <- 365
+forecast_days <- 7
+
 model_ranges <- tibble(
   name = c("Christmas","Late winter","Easter","Early summer","Late summer"),
-  start = as.Date(c("2022-12-19","2023-02-20","2023-04-03","2023-06-05","2023-08-14"))) %>%
-  mutate(end = start + days(13)) %>%
-  mutate(train = map(start, function(x)filter(hd_sales_full, as.Date(SES_TRX_DATEHOUR) < x))) %>%
+  start = as.Date(c("2022-12-22","2023-02-23","2023-04-06","2023-06-08","2023-08-17"))) %>%
+  mutate(end = start + days(forecast_days)) %>%
+  #mutate(train = map(start, function(x)filter(hd_sales_full, as.Date(SES_TRX_DATEHOUR) < x))) %>%
+  mutate(train = map(start, function(x)filter(hd_sales_full, between(as.Date(SES_TRX_DATEHOUR), x - days(training_days), x)))) %>%
   mutate(target = map2(start, end, function(x,y)filter(hd_sales_full, between(as.Date(SES_TRX_DATEHOUR), x, y))))
 model_ranges
 ```
@@ -210,31 +214,39 @@ model_ranges_avg_calced %>%
   geom_line()
 ```
 
-So far this looks pretty promising, although it is quite hard to decide which model is better. Let's calculate some aggregate errors, like mean absolute error (MAE) and root mean square error (RMSE).
+So far this looks pretty promising, although it is quite hard to decide which model is better. Let's calculate some aggregate errors, like mean absolute error (MAE) and root mean square error (RMSE) after rounding the results.
 
 ```{r}
-model_ranges_avg_calced %>%
+errors_avg_model <- model_ranges_avg_calced %>%
   mutate(mae.n4 = map2(target, model_avg_N_4, 
                           function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
-                            mutate(ae = abs(NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            mutate(ae = abs(round(NUMBER_OF_PRODUCT_PRED) - NUMBER_OF_PRODUCT_SOLD)) %>%
                             pull(ae) %>%
                             mean()) %>% unlist()) %>%
   mutate(mae.n12 = map2(target, model_avg_N_12, 
                           function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
-                            mutate(ae = abs(NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            mutate(ae = abs(round(NUMBER_OF_PRODUCT_PRED) - NUMBER_OF_PRODUCT_SOLD)) %>%
                             pull(ae) %>%
                             mean()) %>% unlist()) %>%
   mutate(rmse.n4 = map2(target, model_avg_N_4, 
                           function(x,y)left_join(x, y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
-                            mutate(se = (NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            mutate(se = (round(NUMBER_OF_PRODUCT_PRED) - NUMBER_OF_PRODUCT_SOLD)^2) %>%
                             pull(se) %>%
                             {sqrt(mean(.))}) %>% unlist()) %>%
   mutate(rmse.n12 = map2(target, model_avg_N_12, 
                           function(x,y)left_join(x , y %>% rename(NUMBER_OF_PRODUCT_PRED = NUMBER_OF_PRODUCT_SOLD), by = "SES_TRX_DATEHOUR") %>%
-                            mutate(se = (NUMBER_OF_PRODUCT_PRED - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            mutate(se = (round(NUMBER_OF_PRODUCT_PRED) - NUMBER_OF_PRODUCT_SOLD)^2) %>%
                             pull(se) %>%
                             {sqrt(mean(.))}) %>% unlist()) %>%
-  select(name, mae.n4 : rmse.n12) %>%
+  select(name, mae.n4 : rmse.n12)
+
+errors_avg_model
+```
+
+We can also plot them.
+
+```{r}
+errors_avg_model %>%
   pivot_longer(mae.n4 : rmse.n12, names_to = "memod", values_to = "value") %>%
   separate(memod, into = c("measure", "N")) %>%
   ggplot(aes(x = name, y = value, colour = N, fill = N)) +
@@ -244,7 +256,7 @@ model_ranges_avg_calced %>%
   theme_minimal()
 ```
 
-The longer average model (N = 12) seems to outperform the shorter one (N = 4). Not necessarily what I have expected, but the difference is not huge.
+The longer shorter model (N = 4) seems to outperform the longer one (N = 4). We can also see that the predictions not containig holiday performed much better.
 
 ## Facebook Prophet model
 
@@ -252,24 +264,26 @@ You can access the documentation of the prophet model [here.](https://facebook.g
 
 Let's setup a test model on the first range:
   - we need some renaming, like *ds* for time and *y* for the sales variable
+  - we switch off yearly seasonality because of the inconsistent sales periodicity
   - we add the hungarian holiday calendar (since the sales data is from HU)
   - since our date variable is datetime, 
 
 ```{r}
-test_set_no <- 5
+test_set_no <- 1
 
 train <- model_ranges$train[[test_set_no]] %>%
   rename(ds = SES_TRX_DATEHOUR) %>%
   rename(y = NUMBER_OF_PRODUCT_SOLD)
-m <- prophet() %>%
-  add_country_holidays('HU') %>%
+m1_prefit <- prophet(yearly.seasonality = FALSE) %>%
+  add_country_holidays('HU') 
+m1 <- m1_prefit %>%
   fit.prophet(train)
 ```
 
 Let's see if the holidays we are looking for are included (Karácsony, Húsvét).
 
 ```{r}
-m$train.holiday.names
+m1$train.holiday.names
 ```
 What about the results?
 
@@ -277,13 +291,13 @@ What about the results?
 future <- model_ranges$target[[test_set_no]] %>%
   rename(ds = SES_TRX_DATEHOUR) %>%
   select(ds)
-fcst <- predict(m, future)
-plot(m, fcst) + xlim(max(future$ds) - weeks(4), max(future$ds))
+fcst <- predict(m1, future)
+plot(m1, fcst) + xlim(max(future$ds) - weeks(4), max(future$ds)) + ylim(0, max(fcst$yhat)*2)
 ```
 Looks OK, let's see the periodicities!
 
 ```{r}
-prophet_plot_components(m, fcst)
+prophet_plot_components(m1, fcst)
 ```
 We can see:
  - an increasing (but not too aggressive) trend
@@ -307,35 +321,44 @@ Funnily enough this (uncallibrated!) model more or less performs similarly to th
 
 ### 2nd task
 
-Play around with the following parameters, train the model and see if you can decrease the error
+Play around with the following parameters, train the model and see if you can decrease the error:
 
-```{r}
-m2 <- prophet(
-      growth = "linear", #linear or logistic or flat
+  - set the growth to logistic
+  - seasonality to multiplicative
+  - decrease ammount of changepoint regularisation compared to the default (you have to figure out which variable I am thinking of)
+  - and whatever you may change
+  
+You can run the boxes below to check the results.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+m2_prefit <- prophet(
+      growth = "logistic", #linear or logistic or flat
       changepoints = NULL,
       n.changepoints = 25,
-      changepoint.range = 0.8,
-      yearly.seasonality = "auto",
+      changepoint.range = 0.99,
+      yearly.seasonality = FALSE,
       weekly.seasonality = "auto",
       daily.seasonality = "auto",
       holidays = NULL,
-      seasonality.mode = "additive", #additive or multiplicative
-      seasonality.prior.scale = 100,
-      holidays.prior.scale = 0.01,
+      seasonality.mode = "multiplicative", #additive or multiplicative
+      seasonality.prior.scale = 10,
+      holidays.prior.scale = 1,
       changepoint.prior.scale = 0.5,
-      interval.width = 0.8,
+      interval.width = 0.99,
       uncertainty.samples = 1000,
       fit = FALSE
       ) %>%
-  add_country_holidays('HU') %>%
-  fit.prophet(train %>% mutate(cap = 80) %>% mutate(floor = 0)) #cap and floor added for if logistic growth is selected
-fcst2 <- predict(m, future %>% mutate(cap = 80) %>% mutate(floor = 0))
+  add_country_holidays('HU')
+m2 <- m2_prefit %>%
+  fit.prophet(train %>% mutate(floor = 0, cap = 100)) #cap and floor added for if logistic growth is selected
+fcst2 <- predict(m2, future %>% mutate(floor = 0, cap = 100))
 ```
 
 How does it look?
 
 ```{r}
-plot(m2, fcst2) + xlim(max(future$ds) - weeks(4), max(future$ds))
+plot(m2, fcst2) + xlim(max(future$ds) - weeks(4), max(future$ds))  + ylim(0, max(fcst$yhat)*2) + add_changepoints_to_plot(m2)
+#plot(m2, fcst2) + add_changepoints_to_plot(m2)
 ```
 
 
@@ -349,10 +372,154 @@ Let's eat the pudding and check MAE and RMSE
 
 ```{r}
 model_ranges$target[[test_set_no]] %>%
-   left_join(fcst %>% select(ds,yhat), by = join_by(SES_TRX_DATEHOUR == ds)) %>%
+   left_join(fcst2 %>% select(ds,yhat), by = join_by(SES_TRX_DATEHOUR == ds)) %>%
    drop_na() %>%
    mutate(ae = abs(NUMBER_OF_PRODUCT_SOLD-yhat)) %>%
    mutate(se = (NUMBER_OF_PRODUCT_SOLD-yhat)^2) %>%
    select(-SES_TRX_DATEHOUR) %>%
    {setNames(c(mean(.$ae),sqrt(mean(.$se))), c("MAE","RMSE"))}
 ```
+
+### 3rd task
+
+Let's check if we estimate a logistic model if we get better results.
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+m3_prefit <- prophet(
+      growth = "linear", #linear will function as logistic
+      changepoints = NULL,
+      n.changepoints = 25,
+      changepoint.range = 0.99,
+      yearly.seasonality = FALSE,
+      weekly.seasonality = "auto",
+      daily.seasonality = "auto",
+      holidays = NULL,
+      seasonality.mode = "additive", #additive will function as multiplicative
+      seasonality.prior.scale = 1000,
+      holidays.prior.scale = 1000,
+      changepoint.prior.scale = 0.2,
+      interval.width = 0.99,
+      uncertainty.samples = 1000,
+      fit = FALSE
+      ) %>%
+  add_country_holidays('HU')
+m3 <- m3_prefit %>%
+  fit.prophet(train %>% mutate(y = log(y+1))) #we shift sales by one to eliminate zeros
+fcst3 <- predict(m3, future)
+```
+
+How does it look?
+
+```{r}
+plot(m3, fcst3) + xlim(max(future$ds) - weeks(4), max(future$ds))  + add_changepoints_to_plot(m3)
+```
+
+Check out the components!
+
+```{r}
+prophet_plot_components(m3, fcst3)
+```
+
+
+Let's eat the pudding and check MAE and RMSE. Remember that here we need to 
+
+```{r}
+model_ranges$target[[test_set_no]] %>%
+   left_join(fcst3 %>% select(ds,yhat) %>% mutate(yhat = exp(yhat)), by = join_by(SES_TRX_DATEHOUR == ds)) %>%
+   drop_na() %>%
+   mutate(ae = abs(NUMBER_OF_PRODUCT_SOLD-yhat)) %>%
+   mutate(se = (NUMBER_OF_PRODUCT_SOLD-yhat)^2) %>%
+   select(-SES_TRX_DATEHOUR) %>%
+   {setNames(c(mean(.$ae),sqrt(mean(.$se))), c("MAE","RMSE"))}
+```
+
+
+### Now lets run all these models and compare them
+
+```{r}
+model_ranges_prophet_calced <- model_ranges %>%
+  mutate(model_fbp_m1 = map2(train, target, function(x,y)predict(
+    fit.prophet(m1_prefit, x %>% rename(ds = SES_TRX_DATEHOUR, y = NUMBER_OF_PRODUCT_SOLD)), 
+    y %>% rename(ds = SES_TRX_DATEHOUR) %>% select(ds)))) %>%
+  mutate(model_fbp_m2 = map2(train, target, function(x,y)predict(
+    fit.prophet(m2_prefit, x %>% rename(ds = SES_TRX_DATEHOUR, y = NUMBER_OF_PRODUCT_SOLD) %>% mutate(floor = 0, cap = 100)), 
+    y %>% rename(ds = SES_TRX_DATEHOUR) %>% select(ds) %>% mutate(floor = 0, cap = 100)))) %>%
+  mutate(model_fbp_m3 = map2(train, target, function(x,y)predict(
+    fit.prophet(m3_prefit, x  %>% rename(ds = SES_TRX_DATEHOUR, y = NUMBER_OF_PRODUCT_SOLD) %>% mutate(y = log(y+1))), 
+    y %>% rename(ds = SES_TRX_DATEHOUR) %>% select(ds))))
+```
+
+And generate MAE and RMSE errors for all. Here we do cheat a little: we floor estimates at zero, the theoretical minimum (there was no need for this on the mean model) as well as rounding.
+
+```{r}
+errors_fbp_model <- model_ranges_prophet_calced %>%
+  mutate(mae.fbm1 = map2(target, model_fbp_m1, 
+                          function(x,y)left_join(x, y %>% mutate(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = round(pmax(yhat, 0))) %>%
+                            mutate(ae = abs(yhat - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            pull(ae) %>%
+                            mean()) %>% unlist()) %>%
+  mutate(mae.fbm2 = map2(target, model_fbp_m2, 
+                          function(x,y)left_join(x, y %>% mutate(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = round(pmax(yhat, 0))) %>%
+                            mutate(ae = abs(yhat - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            pull(ae) %>%
+                            mean()) %>% unlist()) %>%
+  mutate(mae.fbm3 = map2(target, model_fbp_m3, 
+                          function(x,y)left_join(x, y %>% mutate(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = pmax(yhat, 0)) %>%
+                            mutate(ae = abs(round(exp(yhat)) - NUMBER_OF_PRODUCT_SOLD)) %>%
+                            pull(ae) %>%
+                            mean()) %>% unlist()) %>%
+  mutate(rmse.fbm1 = map2(target, model_fbp_m1, 
+                          function(x,y)left_join(x, y %>% rename(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = round(pmax(yhat, 0))) %>%
+                            mutate(se = (yhat - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            pull(se) %>%
+                            {sqrt(mean(.))}) %>% unlist()) %>%
+  mutate(rmse.fbm2 = map2(target, model_fbp_m2, 
+                          function(x,y)left_join(x, y %>% rename(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = round(pmax(yhat, 0))) %>%
+                            mutate(se = (yhat - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            pull(se) %>%
+                            {sqrt(mean(.))}) %>% unlist()) %>%
+  mutate(rmse.fbm3 = map2(target, model_fbp_m3, 
+                          function(x,y)left_join(x, y %>% rename(SES_TRX_DATEHOUR = ds), by = "SES_TRX_DATEHOUR") %>%
+                            drop_na() %>%
+                            mutate(yhat = pmax(yhat, 0)) %>%
+                            mutate(se = (round(exp(yhat)) - NUMBER_OF_PRODUCT_SOLD)^2) %>%
+                            pull(se) %>%
+                            {sqrt(mean(.))}) %>% unlist()) %>%
+  select(name, mae.fbm1 : rmse.fbm3)
+
+errors_fbp_model
+```
+Plot them together with the errors from the benchmark model.
+
+```{r}
+errors_avg_model %>%
+  left_join(errors_fbp_model, by = "name") %>%
+  pivot_longer(mae.n4 : rmse.fbm3, names_to = "memod", values_to = "value") %>%
+  separate(memod, into = c("measure", "model")) %>%
+  ggplot(aes(x = as.factor(name), y = value, colour = model, fill = model)) +
+  facet_wrap(vars(measure), scales = "free_y") +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  theme_minimal()
+```
+Our benchmark models seemingly outperform prophet!
+
+The devil lies in the details and in this case it is two fold:
+
+  - The GLM model fbprophet is based on a likelyhood model that work with gaussian errors. We can easily see how this can pose a threat to our approach since our process is more likely be poisson. The log-normal approach treats some of the side effects, but the baseline model is much less prone to this aspect.
+  - The production model may have fixed breakpoints and extra "holidays" added that are specific to the station
+  - The model parameters span a huge space where we can't really find an optimal setup by hand in considerable time. To update on these, we can either implement a grid search method or an optimized method like [hyperopt](https://pypi.org/project/hyperopt-prophet/)
+  - One can also add additional regressors to the model (like weather, prices, etc.)
+  
+  
+For a less linear but better performing model also see [neuralProphet](https://arxiv.org/abs/2111.15397?fbclid=IwAR2vCkHYiy5yuPPjWXpJgAJs-uD5NkH4liORt1ch4a6X_kmpMqagGtXyez4)
