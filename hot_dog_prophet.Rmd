@@ -55,8 +55,8 @@ hd_sales_full %>% head(30)
 What is the percentage of zero sales hours through all observations?
 
 ```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
-n_all_observations <- hd_sales_full %>% nrow()
-n_zero_sales <- hd_sales_full %>% filter(NUMBER_OF_PRODUCT_SOLD == 0) %>%  nrow()
+n_all_observations <- ... %>% nrow()
+n_zero_sales <- ... %>% filter(...) %>%  nrow()
 
 n_zero_sales/n_all_observations
 ```
@@ -126,12 +126,12 @@ Based on what we have learned before, let's see how the daily periodicity looks 
 
 ```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
 hd_sales_full_hourly <- hd_sales_full %>%
-  mutate(SES_TRX_DATE = as.Date(SES_TRX_DATEHOUR)) %>%
-  mutate(SES_TRX_HOUR = hour(SES_TRX_DATEHOUR)) %>%
-  group_by(SES_TRX_DATE) %>%
-  mutate(NUMBER_OF_PRODUCT_SOLD_DAILY = sum(NUMBER_OF_PRODUCT_SOLD)) %>%
+  mutate(SES_TRX_DATE = ...) %>%
+  mutate(SES_TRX_HOUR = ...) %>%
+  group_by(...) %>%
+  mutate(NUMBER_OF_PRODUCT_SOLD_DAILY = sum(...)) %>%
   ungroup() %>%
-  mutate(NUMBER_OF_PRODUCT_SOLD_REL = NUMBER_OF_PRODUCT_SOLD/NUMBER_OF_PRODUCT_SOLD_DAILY)
+  mutate(NUMBER_OF_PRODUCT_SOLD_REL = ...)
 
 ggplot(hd_sales_full_hourly, aes(x=as.factor(SES_TRX_HOUR), y=NUMBER_OF_PRODUCT_SOLD_REL, color=as.factor(SES_TRX_HOUR))) +
   geom_boxplot() + 
@@ -319,33 +319,34 @@ model_ranges$target[[test_set_no]] %>%
 
 Funnily enough this (uncallibrated!) model more or less performs similarly to the average model. But remember: we haven't set up any parameters! And prophet has many... see [here.](https://facebook.github.io/prophet/docs/quick_start.html#r-api)
 
-### 2nd task
+### 3rd task
 
 Play around with the following parameters, train the model and see if you can decrease the error:
 
   - set the growth to logistic
   - seasonality to multiplicative
   - decrease ammount of changepoint regularisation compared to the default (you have to figure out which variable I am thinking of)
+  - disable yearly seasonality
   - and whatever you may change
   
 You can run the boxes below to check the results.
 
 ```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
 m2_prefit <- prophet(
-      growth = "logistic", #linear or logistic or flat
+      growth = ..., #linear or logistic or flat
       changepoints = NULL,
-      n.changepoints = 25,
-      changepoint.range = 0.99,
-      yearly.seasonality = FALSE,
-      weekly.seasonality = "auto",
-      daily.seasonality = "auto",
+      n.changepoints = ...,
+      changepoint.range = ...,
+      yearly.seasonality = ...,
+      weekly.seasonality = ...,
+      daily.seasonality = ...,
       holidays = NULL,
-      seasonality.mode = "multiplicative", #additive or multiplicative
-      seasonality.prior.scale = 10,
-      holidays.prior.scale = 1,
-      changepoint.prior.scale = 0.5,
-      interval.width = 0.99,
-      uncertainty.samples = 1000,
+      seasonality.mode = ..., #additive or multiplicative
+      seasonality.prior.scale = ...,
+      holidays.prior.scale = ...,
+      changepoint.prior.scale = ...,
+      interval.width = ...,
+      uncertainty.samples = ...,
       fit = FALSE
       ) %>%
   add_country_holidays('HU')
@@ -380,13 +381,13 @@ model_ranges$target[[test_set_no]] %>%
    {setNames(c(mean(.$ae),sqrt(mean(.$se))), c("MAE","RMSE"))}
 ```
 
-### 3rd task
+### 4rd task
 
 Let's check if we estimate a logistic model if we get better results.
 
 ```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
 m3_prefit <- prophet(
-      growth = "linear", #linear will function as logistic
+      growth = ..., #linear will function as logistic
       changepoints = NULL,
       n.changepoints = 25,
       changepoint.range = 0.99,
@@ -394,7 +395,7 @@ m3_prefit <- prophet(
       weekly.seasonality = "auto",
       daily.seasonality = "auto",
       holidays = NULL,
-      seasonality.mode = "additive", #additive will function as multiplicative
+      seasonality.mode = ..., #additive will function as multiplicative
       seasonality.prior.scale = 1000,
       holidays.prior.scale = 1000,
       changepoint.prior.scale = 0.2,
@@ -404,7 +405,7 @@ m3_prefit <- prophet(
       ) %>%
   add_country_holidays('HU')
 m3 <- m3_prefit %>%
-  fit.prophet(train %>% mutate(y = log(y+1))) #we shift sales by one to eliminate zeros
+  fit.prophet(train %>% mutate(y = log(y+...)) #we shift sales by one to eliminate zeros
 fcst3 <- predict(m3, future)
 ```
 
