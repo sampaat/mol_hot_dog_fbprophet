@@ -19,8 +19,8 @@ Open up the github project [sampaat/mol_hot_dog_fbprophet](https://github.com/sa
 
 ## About me
 
--   Physics MSc @ ELTE, Econ MSc @ Corvinus
--   Hopefully soon: BI PhD @ Corvinus
+-   Physics MSc \@ ELTE, Econ MSc \@ Corvinus
+-   Hopefully soon: BI PhD \@ Corvinus
 -   Been to: Morgan Stanley / Alphacruncher as Quant / Data Scientist
 
 ## Production Planning at MOL Retail
@@ -71,36 +71,32 @@ Fresh products are delicate:
 -   We compare forecasted sales with fact and waste numbers
 -   Compliance is communicated to business
 -   Compliant stations can statistically do better
-  -   50% less waste
-  -   14% more sales
-  
+-   50% less waste
+-   14% more sales
+
 ## Modeling, benchmark
 
 It used to be done with an average model:
 
-$$\chi\left(D,H,N\right)=\frac{1}{N}\sum_{W = 0}^{N} x\left(D-W,H\right)$$
-Basically a moving average model with a weekly step.
+$$\chi\left(D,H,N\right)=\frac{1}{N}\sum_{W = 0}^{N} x\left(D-W,H\right)$$ Basically a moving average model with a weekly step.
 
 ## Modeling, fbprophet
 
 The state of the art linear solution:
 
-$$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$
-Sean J. Taylor, Benjamin Letham (2018) Forecasting at scale. *The American Statistician* **72**(1):37-45 (https://peerj.com/preprints/3190.pdf).
+$$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$ Sean J. Taylor, Benjamin Letham (2018) Forecasting at scale. *The American Statistician* **72**(1):37-45 (https://peerj.com/preprints/3190.pdf).
 
 ## Fbprophet growth
 
 Linear or **nonlinear, saturating growth**:
 
-$$g(t) = \frac{C}{1+exp(-k(t-m))}$$
-It can be made more elaborate with piecewise fit.
+$$g(t) = \frac{C}{1+exp(-k(t-m))}$$ It can be made more elaborate with piecewise fit.
 
 ## Fbprophet seasonality
 
 Seasonalites are handled with Fourier-series:
 
-$$s(t) = \sum_{n=1}^N\left(a_ncos\left(\frac{2\pi nt}{P}\right)+b_nsin\left(\frac{2\pi nt}{P}\right)\right)$$
-## Fbprophet holidays
+$$s(t) = \sum_{n=1}^N\left(a_ncos\left(\frac{2\pi nt}{P}\right)+b_nsin\left(\frac{2\pi nt}{P}\right)\right)$$ \## Fbprophet holidays
 
 Holidays are estimated with a local normal deviation:
 
@@ -108,20 +104,25 @@ $$h(t) = \left[I(t \in D_1),\dots,I(t \in D_L)\right]\kappa$$
 
 ## Fbprophet estimation
 
-  - Bayesian approact
-  - Uses Stan’s L-BFGS
-  
-Carpenter, B., Gelman, A., Hoffman, M., Lee, D., Goodrich, B., Betancourt, M., Brubaker,
-M. A., Guo, J., Li, P. & Riddell, A. (2017), ‘Stan: A probabilistic programming language’,
-*Journal of Statistical Software* **76**(1).
+-   Bayesian approact
+-   Uses Stan's L-BFGS
 
+Carpenter, B., Gelman, A., Hoffman, M., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M. A., Guo, J., Li, P. & Riddell, A. (2017), 'Stan: A probabilistic programming language', *Journal of Statistical Software* **76**(1).
 
 ## Lab
 
- We will do a lab exercise now to see if fbprophet is in fact better.
- 
- Open up *hot_dog_prophet.Rmd* but **do not run the whole thing just yet**...
- 
- Any questions so far?
- 
+We will do a lab exercise now to see if fbprophet is in fact better.
 
+Open up *hot_dog_prophet.Rmd* but **do not run the whole thing just yet**...
+
+Any questions so far?
+
+## Opportunities @MOL
+
+We often start trainee positions (even short term) in our team:
+
+-   Electricity consumption
+-   Costumer behavior
+-   etc.
+
+Write to mate.sandor et mol.hu
