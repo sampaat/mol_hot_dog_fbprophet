@@ -78,7 +78,7 @@ ggplot(data=hd_sales_full, aes(x=SES_TRX_DATEHOUR, y=NUMBER_OF_PRODUCT_SOLD, gro
   geom_point() + 
   theme_minimal()
 ```
-Not much to see with hourly plotting. Lets create a daily aggregate for analysis and visualize that.
+Not much to see with hourly plotting, maybe that the product is gaining traction over time. Lets create a daily aggregate for analysis and visualize that.
 
 ```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
 hd_sales_full_daily <- hd_sales_full %>%
@@ -91,7 +91,7 @@ ggplot(data=hd_sales_full_daily, aes(x=SES_TRX_DATE, y=NUMBER_OF_PRODUCT_SOLD, g
   geom_point() + 
   theme_minimal()
 ```
-Much better. Now we see some local volatility, which can be some weekly periodicity and a regime shift around february of '22 as well as some local trends.
+Much better. Now we see some local volatility, which can be some weekly periodicity and a regime change around february of '22 as well as some local trends.
 
 Let's see that weekly periodicity! We can look at the distribution of sales by weekday.
 
@@ -143,10 +143,10 @@ We can see some local peaks around main mealtimes.
 
 ## Preparation for simulations
 
-Now we need to create a set of training and test sets, some involving periods of holidays. We do this as a form of cross-validation. Let's set the prediction periods to be 2 weeks long, this will be the timeframe of the test sets as well. Let's create 5 datasets for cross validation. All training periods will start wiht the first observation and ends with the start of the test period. This reflects how we would operate normally in production as well. We also only take the last half years observations into the training set to avoid overfitting (and erroneous runtimes, but you can increse it if you want to test around)
+Now we need to create a set of training and test sets, some involving periods of holidays. We do this as a form of cross-validation. Let's set the prediction periods to be 2 weeks long, this will be the timeframe of the test sets as well. Let's create 5 datasets for cross validation. All training periods will start wiht the first observation and ends with the start of the test period. This reflects how we would operate normally in production as well. We could also take less that the full history of observations into the training set to avoid overfitting (and erroneous runtimes) you can play around with it later
 
 ```{r}
-training_days <- 365
+training_days <- 999#365
 forecast_days <- 7
 
 model_ranges <- tibble(
@@ -274,7 +274,7 @@ test_set_no <- 1
 train <- model_ranges$train[[test_set_no]] %>%
   rename(ds = SES_TRX_DATEHOUR) %>%
   rename(y = NUMBER_OF_PRODUCT_SOLD)
-m1_prefit <- prophet(yearly.seasonality = FALSE) %>%
+m1_prefit <- prophet() %>%
   add_country_holidays('HU') 
 m1 <- m1_prefit %>%
   fit.prophet(train)
